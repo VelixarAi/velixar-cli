@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "velixar-cli"
+version = "0.1.0"
+description = "Velixar Memory API — CLI"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+authors = [{ name = "Velixar AI" }]
+dependencies = [
+    "click>=8.0",
+    "rich>=13.0",
+    "requests>=2.28",
+]
+
+[project.scripts]
+velixar = "velixar_cli:cli"
+
+[project.urls]
+Homepage = "https://velixarai.com"
+Documentation = "https://docs.velixarai.com"
+Repository = "https://github.com/VelixarAi/velixar-cli"
