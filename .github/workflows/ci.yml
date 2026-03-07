@@ -1,0 +1,12 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    uses: velixarai/velixar-ci-workflows/.github/workflows/python-ci.yml@main
+    secrets: inherit
