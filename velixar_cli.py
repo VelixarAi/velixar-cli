@@ -15,7 +15,7 @@ from rich import print as rprint
 
 console = Console()
 
-DEFAULT_BASE_URL = "https://api.velixarai.com/v1"
+DEFAULT_BASE_URL = "https://api.velixarai.com"
 
 
 def get_config():
@@ -84,9 +84,10 @@ def auth_status():
     console.print(f"[green]✓[/green] Authenticated — key: {masked}")
     console.print(f"  Base URL: {base_url}")
     try:
-        data = api("GET", "/health")
+        resp = requests.get(f"{base_url}/health", timeout=10)
+        data = resp.json()
         console.print(f"  API status: [green]{data.get('status', 'ok')}[/green]")
-    except SystemExit:
+    except Exception:
         console.print("  API status: [red]unreachable[/red]")
 
 
@@ -94,16 +95,19 @@ def auth_status():
 
 @cli.command()
 @click.argument("content")
-@click.option("--tier", "-t", type=int, default=None, help="Memory tier (0=pinned, 1=recent, 2=semantic)")
+@click.option("--tier", "-t", type=int, default=None, help="Memory tier (0=pinned, 1=session, 2=semantic, 3=org)")
 @click.option("--user-id", "-u", default=None, help="User ID namespace")
+@click.option("--tags", default=None, help="Comma-separated tags")
 @click.option("--metadata", "-m", default=None, help="JSON metadata")
-def store(content, tier, user_id, metadata):
+def store(content, tier, user_id, tags, metadata):
     """Store a memory."""
     body = {"content": content}
     if tier is not None:
         body["tier"] = tier
     if user_id:
         body["user_id"] = user_id
+    if tags:
+        body["tags"] = [t.strip() for t in tags.split(",") if t.strip()]
     if metadata:
         body["metadata"] = json.loads(metadata)
     data = api("POST", "/memory", json=body)
@@ -197,10 +201,20 @@ def delete(memory_id):
 @cli.command()
 def health():
     """Check API health."""
-    data = api("GET", "/health")
+    _, base_url = get_config()
+    try:
+        resp = requests.get(f"{base_url}/health", timeout=10)
+        data = resp.json()
+    except Exception as e:
+        console.print(f"[red]●[/red] API: unreachable ({e})")
+        return
     status = data.get("status", "unknown")
-    color = "green" if status == "ok" else "red"
+    qdrant = data.get("qdrant", False)
+    redis = data.get("redis", False)
+    color = "green" if status == "healthy" else "red"
     console.print(f"[{color}]●[/{color}] API: {status}")
+    console.print(f"  Qdrant: {'[green]✓[/green]' if qdrant else '[red]✗[/red]'}")
+    console.print(f"  Redis:  {'[green]✓[/green]' if redis else '[red]✗[/red]'}")
 
 
 # ── Interactive ───────────────────────────────────────
