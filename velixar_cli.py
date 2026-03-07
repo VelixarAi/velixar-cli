@@ -9,9 +9,7 @@ import requests
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
-from rich.syntax import Syntax
 from rich.prompt import Prompt
-from rich import print as rprint
 
 console = Console()
 
@@ -271,7 +269,7 @@ def interactive(user_id):
             console.print(json.dumps(data, indent=2, default=str))
         elif action == "delete" and arg:
             api("DELETE", f"/memory/{arg.strip()}")
-            console.print(f"[green]✓[/green] Deleted")
+            console.print("[green]✓[/green] Deleted")
         else:
             console.print("[dim]Commands: store <text> | search <query> | list | get <id> | delete <id> | quit[/dim]")
 

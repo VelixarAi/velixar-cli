@@ -9,3 +9,4 @@ on:
 jobs:
   ci:
     uses: velixarai/velixar-ci-workflows/.github/workflows/python-ci.yml@main
+    secrets: inherit
