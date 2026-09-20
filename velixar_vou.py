@@ -469,34 +469,81 @@ def mcp_watch(ctx, interval):
 @click.option("--hours", default=24)
 @click.option("--format", "fmt", type=click.Choice(["table", "json"]), default="table")
 def coverage(hours, fmt):
-    """What fraction of the declared catalog is actually being measured?"""
+    """THREE coverage numbers — instrumented, exercised, and calibratable."""
     data = _get("coverage", hours=hours)
     if _emit(data, fmt):
         return
+
+    cat, run, res = data.get("catalog", {}), data.get("runtime", {}), data.get("resource", {})
     grid = Table.grid(padding=(0, 2))
     grid.add_column(style="dim")
     grid.add_column(justify="right")
-    grid.add_row("Canonical operations", str(data.get("canonical_operations")))
-    grid.add_row("Instrumented (upper bound)", str(data.get("instrumented_upper_bound")))
-    grid.add_row("Observed this period", str(data.get("observed_this_period")))
-    grid.add_row("Missing instrumentation", str(data.get("missing_instrumentation")))
-    grid.add_row("Unclassified events", str(data.get("unclassified_events")))
-    grid.add_row("Without resource evidence",
-                 str(data.get("operations_without_resource_evidence")))
-    grid.add_row("Observed / catalog", f"{data.get('observed_pct_of_catalog')}%")
+    grid.add_column()
+    grid.add_row("CATALOG", _ratio(cat.get("with_emitter"), cat.get("declared"), cat.get("pct")),
+                 "operations with a proved emitter — is the platform instrumented?")
+    grid.add_row("RUNTIME", _ratio(run.get("observed"), run.get("expected"), run.get("pct")),
+                 "of those emitters, how many actually ran")
+    grid.add_row("RESOURCE", _ratio(res.get("events_with_evidence"),
+                                    res.get("events_requiring_evidence"), res.get("pct")),
+                 "events carrying q_r — can we calibrate the economics?")
     console.print(Panel(grid, title=f"VOU coverage — {BETA}"))
-    console.print(f"  [yellow]What that % means:[/yellow] {data.get('percentage_means')}")
-    console.print(f"  [dim]{data.get('instrumented_caveat', '')}[/dim]")
-    missing = data.get("missing_instrumentation_names") or []
+    console.print(f"  [yellow]{res.get('why_it_matters', '')}[/yellow]")
+
+    missing = cat.get("missing_emitter") or []
     if missing:
-        console.print("\n  Not instrumented:", style="bold")
-        for name in missing:
-            console.print(f"    · {name}", style="dim")
-    unclassified = data.get("unclassified_names") or []
+        console.print(f"\n  No emitter ({len(missing)}):", style="bold")
+        console.print("    " + "  ".join(missing), style="dim")
+    idle = run.get("not_exercised") or []
+    if idle:
+        console.print(f"\n  Has an emitter, did not run ({len(idle)}):", style="bold")
+        console.print("    " + "  ".join(idle), style="dim")
+    unclassified = data.get("unclassified_operations") or []
     if unclassified:
         console.print("\n  Observed but NOT in the catalog:", style="bold yellow")
         for name in unclassified:
             console.print(f"    · {name}")
+    _banner()
+
+
+def _ratio(num, den, pct):
+    if den in (None, 0):
+        return Text("— / —", style="dim")
+    style = "green" if (pct or 0) >= 80 else "yellow" if (pct or 0) >= 40 else "red"
+    return Text(f"{num}/{den}  {pct}%", style=style)
+
+
+@vou.command()
+@click.option("--hours", default=24)
+@click.option("--format", "fmt", type=click.Choice(["table", "json"]), default="table")
+def resources(hours, fmt):
+    """q_r completeness — the number the assumed weights will be replaced from."""
+    data = _get("coverage", hours=hours)
+    if _emit(data, fmt):
+        return
+    res = data.get("resource", {})
+
+    table = Table(title=f"Resource evidence coverage — {BETA}")
+    table.add_column("RESOURCE")
+    table.add_column("OBSERVED", justify="right")
+    table.add_column("OF EVENTS", justify="right")
+    table.add_column("%", justify="right")
+    table.add_column("")
+    for kind, v in (res.get("by_resource") or {}).items():
+        pct = v.get("pct")
+        bar = "█" * int((pct or 0) / 5)
+        style = "green" if (pct or 0) >= 80 else "yellow" if (pct or 0) >= 30 else "red"
+        table.add_row(kind, str(v.get("observed")), str(v.get("of_events")),
+                      "—" if pct is None else f"{pct}%", Text(bar, style=style))
+    console.print(table)
+
+    console.print(f"  [dim]denominator: {res.get('denominator', '')}[/dim]")
+    missing = res.get("operations_missing_evidence") or {}
+    if missing:
+        console.print("\n  Operations emitting WITHOUT evidence:", style="bold yellow")
+        for op, count in missing.items():
+            console.print(f"    {count:>4}  {op}")
+        console.print("    [dim]these normalize fine and can never help derive a "
+                      "measured weight[/dim]")
     _banner()
 
 
