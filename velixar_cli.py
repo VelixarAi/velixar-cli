@@ -276,5 +276,15 @@ def interactive(user_id):
     console.print("[dim]Bye![/dim]")
 
 
+# ── VOU beta meter ────────────────────────────────────
+# Registered at the BOTTOM on purpose: velixar_vou calls back into `api()` above,
+# so importing it any earlier would be a circular import. It lives in its own
+# module because the command family is large and the HTTP plumbing above should
+# stay the one place that knows how a Velixar request is authenticated.
+from velixar_vou import vou as _vou_group  # noqa: E402
+
+cli.add_command(_vou_group)
+
+
 if __name__ == "__main__":
     cli()

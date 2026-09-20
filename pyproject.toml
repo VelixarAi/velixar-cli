@@ -16,6 +16,12 @@ dependencies = [
     "requests>=2.28",
 ]
 
+[tool.setuptools]
+# Both modules are shipped. Auto-discovery finds a single top-level module in a
+# flat layout but is not guaranteed to pick up a second one, and a CLI that
+# installs without its own `vou` command would fail only for users, never in dev.
+py-modules = ["velixar_cli", "velixar_vou"]
+
 [project.scripts]
 velixar = "velixar_cli:cli"
 
