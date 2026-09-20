@@ -516,34 +516,121 @@ def _ratio(num, den, pct):
 @click.option("--hours", default=24)
 @click.option("--format", "fmt", type=click.Choice(["table", "json"]), default="table")
 def resources(hours, fmt):
-    """q_r completeness — the number the assumed weights will be replaced from."""
-    data = _get("coverage", hours=hours)
+    """q_r completeness — by resource AND by operation."""
+    data = _get("completeness", hours=hours)
     if _emit(data, fmt):
         return
-    res = data.get("resource", {})
 
-    table = Table(title=f"Resource evidence coverage — {BETA}")
+    by_state = data.get("by_state") or {}
+    console.print(Panel(
+        "  ".join(f"[bold]{k}[/bold] {v}" for k, v in by_state.items()),
+        title=f"Resource evidence — {BETA}"))
+
+    table = Table(title="BY RESOURCE", box=None)
     table.add_column("RESOURCE")
     table.add_column("OBSERVED", justify="right")
-    table.add_column("OF EVENTS", justify="right")
+    table.add_column("EXPECTED", justify="right")
     table.add_column("%", justify="right")
     table.add_column("")
-    for kind, v in (res.get("by_resource") or {}).items():
+    for kind, v in (data.get("by_resource") or {}).items():
         pct = v.get("pct")
-        bar = "█" * int((pct or 0) / 5)
-        style = "green" if (pct or 0) >= 80 else "yellow" if (pct or 0) >= 30 else "red"
-        table.add_row(kind, str(v.get("observed")), str(v.get("of_events")),
-                      "—" if pct is None else f"{pct}%", Text(bar, style=style))
+        table.add_row(kind, str(v.get("observed")), str(v.get("expected_events")),
+                      "—" if pct is None else f"{pct}%",
+                      Text("█" * int((pct or 0) / 5), style=_pct_style(pct)))
     console.print(table)
 
-    console.print(f"  [dim]denominator: {res.get('denominator', '')}[/dim]")
-    missing = res.get("operations_missing_evidence") or {}
-    if missing:
-        console.print("\n  Operations emitting WITHOUT evidence:", style="bold yellow")
-        for op, count in missing.items():
-            console.print(f"    {count:>4}  {op}")
-        console.print("    [dim]these normalize fine and can never help derive a "
-                      "measured weight[/dim]")
+    ops = Table(title="OPERATION RESOURCE COMPLETENESS", box=None)
+    ops.add_column("OPERATION")
+    ops.add_column("STATUS")
+    ops.add_column("%", justify="right")
+    ops.add_column("EVENTS", justify="right")
+    ops.add_column("MISSING DIMENSIONS")
+    for name, v in (data.get("by_operation") or {}).items():
+        pct = v.get("pct")
+        missing = ", ".join(f"{k}×{n}" for k, n in (v.get("missing_dimensions") or {}).items())
+        ops.add_row(name, Text(str(v.get("status")), style=_status_style(v.get("status"))),
+                    "—" if pct is None else f"{pct}%", str(v.get("events")), missing or "—")
+    console.print(ops)
+    console.print(f"  [dim]{data.get('denominator', '')}[/dim]")
+
+    drift = data.get("profile_drift") or {}
+    for key, label in (("observed_but_not_declared", "profile too NARROW"),
+                       ("declared_but_never_observed", "profile too WIDE / layer uninstrumented")):
+        rows = drift.get(key) or {}
+        if rows:
+            console.print(f"\n  [yellow]{label}[/yellow]", style="bold")
+            for op, dims in rows.items():
+                console.print(f"    {op}: {', '.join(dims)}", style="dim")
+    _banner()
+
+
+def _pct_style(pct):
+    return "green" if (pct or 0) >= 80 else "yellow" if (pct or 0) >= 30 else "red"
+
+
+def _status_style(status):
+    return {"COMPLETE": "green", "PARTIAL": "yellow",
+            "NOT_REQUIRED": "dim", "UNMEASURED": "red"}.get(status, "white")
+
+
+@vou.group()
+def calibrate():
+    """Is VOU an economically measured unit yet?"""
+
+
+@calibrate.command("status")
+@click.option("--format", "fmt", type=click.Choice(["table", "json"]), default="table")
+def calibrate_status(fmt):
+    """q_r versus k_r readiness. Makes 'working meter' and 'calibrated unit' distinct."""
+    data = _get("calibrate")
+    if _emit(data, fmt):
+        return
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(style="dim")
+    grid.add_column(justify="right")
+    qr = data.get("q_r_completeness_pct")
+    grid.add_row("q_r completeness", "—" if qr is None else f"{qr}%")
+    grid.add_row("k_r measured", f"{data.get('k_r_measured')} / {data.get('k_r_total')}")
+    total = data.get("weights_total")
+    grid.add_row("beta weights empirical", f"{data.get('weights_empirical')} / {total}")
+    grid.add_row("beta weights assumption", f"{data.get('weights_assumption')} / {total}")
+    grid.add_row("beta weights unruled", f"{data.get('weights_unruled')} / {total}")
+    grid.add_row("anchor", f"{data.get('anchor')} = {data.get('anchor_weight')}")
+    grid.add_row("anchor status", str(data.get("anchor_status")))
+    console.print(Panel(grid, title=f"VOU CALIBRATION — {BETA}"))
+
+    ready = data.get("economic_calibration") == "READY"
+    console.print(Text(f"  ECONOMIC CALIBRATION: {data.get('economic_calibration')}",
+                       style="bold green" if ready else "bold red"))
+    console.print(f"  reason: {data.get('reason')}", style="dim")
+
+    for key, label in (("waiting_for_cost", "waiting only on k_r (no engineering needed)"),
+                       ("waiting_for_resource_evidence", "waiting on q_r (needs an emitter)")):
+        names = data.get(key) or []
+        if names:
+            console.print(f"\n  {label} — {len(names)}:", style="bold")
+            console.print("    " + "  ".join(names), style="dim")
+    _banner()
+
+
+@calibrate.command("unruled")
+@click.option("--format", "fmt", type=click.Choice(["table", "json"]), default="table")
+def calibrate_unruled(fmt):
+    """The unruled weights, with the beta evidence a ruling would rest on."""
+    data = _get("calibrate", view="unruled")
+    if _emit(data, fmt):
+        return
+    table = Table(title=f"Unruled weights ({data.get('count')}) — {BETA}")
+    for col in ("OPERATION", "PRODUCTION STATE", "PROVISIONAL", "OBSERVATIONS",
+                "q_r", "CALIBRATION STATE"):
+        table.add_column(col, justify="right" if col in ("PROVISIONAL", "OBSERVATIONS", "q_r") else "left")
+    for row in data.get("operations", []):
+        qr = row.get("q_r_available")
+        table.add_row(row["operation"], str(row["production_state"]),
+                      f"{row['provisional_weight']:.2f}", str(row["beta_observations"]),
+                      "—" if qr is None else f"{qr}%", str(row["calibration_state"]))
+    console.print(table)
+    console.print(f"  [yellow]{data.get('note', '')}[/yellow]")
     _banner()
 
 
