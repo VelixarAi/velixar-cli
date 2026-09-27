@@ -36,11 +36,18 @@ def api(method, path, **kwargs):
         sys.exit(1)
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     url = f"{base_url}{path}"
-    resp = requests.request(method, url, headers=headers, **kwargs)
+    try:
+        resp = requests.request(method, url, headers=headers, **kwargs)
+    except requests.RequestException:
+        raise click.ClickException("API request unavailable; check connection and configuration") from None
     if resp.status_code >= 400:
-        console.print(f"[red]Error {resp.status_code}:[/red] {resp.text}")
-        sys.exit(1)
-    return resp.json()
+        # Proxy/server diagnostics may reflect credentials or terminal controls.
+        # Never print the raw body before the calling command can contain it.
+        raise click.ClickException(f"API request refused (HTTP {resp.status_code})")
+    try:
+        return resp.json()
+    except ValueError:
+        raise click.ClickException("API returned an invalid JSON response") from None
 
 
 @click.group()

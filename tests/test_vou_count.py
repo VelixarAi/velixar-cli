@@ -46,6 +46,27 @@ class CountTests(unittest.TestCase):
         self.assertEqual(r.exit_code,0);self.assertIn('1.234567',r.output)
         self.assertIn('coding',r.output);self.assertIn('MIXED',r.output)
 
+    def test_summary_rejects_partial_in_table_and_json(self):
+        data=dict(workspace_id='ws',total_vou=7.25,coverage=dict(complete=False,truncated=True))
+        for fmt in ('table','json'):
+            with patch.object(v,'_get',return_value=data):
+                r=CliRunner().invoke(v.vou,['summary','--format',fmt])
+            self.assertNotEqual(r.exit_code,0);self.assertNotIn('7.25',r.output)
+
+    def test_terminal_controls_are_removed_from_server_notes(self):
+        r=self.invoke(dict(workspace_id='ws',total_vou=1,coverage_note='hello\x1b]52;c;payload\x07'))
+        self.assertEqual(r.exit_code,0)
+        self.assertNotIn('\x1b',r.output);self.assertNotIn('\x07',r.output)
+
+    def test_real_shared_http_error_never_prints_body(self):
+        import velixar_cli
+        from types import SimpleNamespace
+        for args in (['count'],['count','--format','json'],['count','--watch'],['summary']):
+            with patch.object(velixar_cli,'get_config',return_value=('synthetic-key','https://example.invalid')),patch.object(velixar_cli.requests,'request',return_value=SimpleNamespace(status_code=403,text='PRIVATE-MARKER\x1b]52;c;secret\x07')):
+                r=CliRunner().invoke(v.vou,args)
+            self.assertNotEqual(r.exit_code,0)
+            self.assertNotIn('PRIVATE-MARKER',r.output);self.assertNotIn('secret',r.output)
+
     def test_no_provider_endpoint(self):
         with patch.object(v,'_get',return_value=dict(workspace_id='ws',total_vou=2)) as get:
             r=CliRunner().invoke(v.vou,['count','--since','2026-09-27T00:00:00Z'])

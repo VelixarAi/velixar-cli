@@ -712,6 +712,10 @@ def _measured_number(value, *, integer=False):
     return str(int(value)) if integer else f"{value:,.6f}".rstrip("0").rstrip(".")
 
 
+def _terminal_text(value):
+    return "".join(c for c in str(value) if c.isprintable())
+
+
 def _weight_basis(data):
     value = data.get("weight_basis")
     return value if value in ("ASSUMPTION", "MIXED", "MEASURED", "UNKNOWN") else "UNKNOWN"
@@ -728,7 +732,7 @@ def _count_line(data):
     if not isinstance(workspace, str) or not workspace.strip():
         raise click.ClickException("VOU unavailable: summary has no workspace")
     # Plain output, never Rich markup: identifiers are server-returned data.
-    workspace = "".join(c for c in workspace if c.isprintable())
+    workspace = _terminal_text(workspace)
     pending = _measured_number(data.get("unnormalized_events"), integer=True)
     gaps = _measured_number(data.get("meter_gaps"), integer=True)
     return (f"VOU {total} | workspace {workspace} | pending {pending} | gaps {gaps}"
@@ -764,7 +768,7 @@ def count(since, until, watch, interval, fmt):
                 window = data.get("window")
                 click.echo("Window: " + (json.dumps(window) if isinstance(window, dict)
                                          else "server coverage unspecified"))
-                click.echo("Coverage: " + str(data.get("coverage_note") or "unspecified"))
+                click.echo("Coverage: " + _terminal_text(data.get("coverage_note") or "unspecified"))
             if not watch:
                 return
             time.sleep(interval)
@@ -779,13 +783,14 @@ def count(since, until, watch, interval, fmt):
 def summary(since, until, fmt):
     """This workspace's VOU, by family and operation."""
     data = _get("summary", since=since, until=until)
+    _count_line(data)  # same scope/coverage gate for table and JSON as count
     if _emit(data, fmt):
         return
     grid = Table.grid(padding=(0, 2))
     grid.add_column(style="dim")
     grid.add_column(justify="right")
     grid.add_row("Total VOU", _measured_number(data.get("total_vou")))
-    grid.add_row("Workspace", Text(str(data.get("workspace_id") or "Unknown")))
+    grid.add_row("Workspace", Text(_terminal_text(data.get("workspace_id") or "Unknown")))
     grid.add_row("Pending normalization", _measured_number(data.get("unnormalized_events"), integer=True))
     grid.add_row("Weights", _weight_basis(data))
     grid.add_row("Governed operations", str(data.get("governed_operations")))
@@ -809,7 +814,7 @@ def summary(since, until, fmt):
     table.add_column("VOU", justify="right")
     table.add_column("COUNT", justify="right")
     for name, agg in list((data.get("vou_by_operation") or {}).items())[:12]:
-        table.add_row(name, f"{agg['vou']:.2f}", str(agg["count"]))
+        table.add_row(Text(_terminal_text(name)), _measured_number(agg.get("vou")), _measured_number(agg.get("count"), integer=True))
     console.print(table)
     runtime_groups = data.get("vou_by_task_model_provider")
     if isinstance(runtime_groups, list) and runtime_groups:
@@ -819,11 +824,11 @@ def summary(since, until, fmt):
         for group in runtime_groups:
             if not isinstance(group, dict):
                 continue
-            tasks.add_row(*(Text(str(group.get(k) or "Unknown")) for k in
+            tasks.add_row(*(Text(_terminal_text(group.get(k) or "Unknown")) for k in
                             ("task_type", "model_id", "provider")),
                           _measured_number(group.get("vou_amount")), _weight_basis(group))
         console.print(tasks)
-    console.print(Text(str(data.get("coverage_note") or "Coverage unspecified"), style="dim"))
+    console.print(Text(_terminal_text(data.get("coverage_note") or "Coverage unspecified"), style="dim"))
     _banner()
 
 
