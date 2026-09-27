@@ -31,6 +31,12 @@ class CountTests(unittest.TestCase):
             r=CliRunner().invoke(v.vou,['count','--watch'])
         self.assertNotEqual(r.exit_code,0);self.assertEqual(r.output.count('VOU 8 |'),1)
         self.assertIn('VOU unavailable',r.output);self.assertNotIn('secret',r.output)
+    def test_server_weight_basis_and_partial_coverage(self):
+        r=self.invoke(dict(workspace_id='ws', total_vou=3, weight_basis='MEASURED', coverage=dict(complete=True,truncated=False)))
+        self.assertIn('MEASURED weights',r.output)
+        r=self.invoke(dict(workspace_id='ws',total_vou=3,coverage=dict(complete=False,truncated=True)))
+        self.assertNotEqual(r.exit_code,0);self.assertNotIn('VOU 3 |',r.output)
+
     def test_no_provider_endpoint(self):
         with patch.object(v,'_get',return_value=dict(workspace_id='ws',total_vou=2)) as get:
             r=CliRunner().invoke(v.vou,['count','--since','2026-09-27T00:00:00Z'])

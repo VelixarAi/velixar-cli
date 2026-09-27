@@ -712,9 +712,17 @@ def _measured_number(value, *, integer=False):
     return str(int(value)) if integer else f"{value:,.6f}".rstrip("0").rstrip(".")
 
 
+def _weight_basis(data):
+    value = data.get("weight_basis")
+    return value if value in ("ASSUMPTION", "MIXED", "MEASURED", "UNKNOWN") else "UNKNOWN"
+
+
 def _count_line(data):
     if not isinstance(data, dict):
         raise click.ClickException("VOU unavailable: invalid summary response")
+    coverage = data.get("coverage")
+    if coverage is not None and (not isinstance(coverage, dict) or coverage.get("complete") is not True or coverage.get("truncated") is not False):
+        raise click.ClickException("VOU unavailable: incomplete summary coverage")
     total = _measured_number(data.get("total_vou"))
     workspace = data.get("workspace_id")
     if not isinstance(workspace, str) or not workspace.strip():
@@ -724,7 +732,7 @@ def _count_line(data):
     pending = _measured_number(data.get("unnormalized_events"), integer=True)
     gaps = _measured_number(data.get("meter_gaps"), integer=True)
     return (f"VOU {total} | workspace {workspace} | pending {pending} | gaps {gaps}"
-            f" | ASSUMPTION weights | {BETA}")
+            f" | {_weight_basis(data)} weights | {BETA}")
 
 
 @vou.command("count")
@@ -779,7 +787,7 @@ def summary(since, until, fmt):
     grid.add_row("Total VOU", _measured_number(data.get("total_vou")))
     grid.add_row("Workspace", Text(str(data.get("workspace_id") or "Unknown")))
     grid.add_row("Pending normalization", _measured_number(data.get("unnormalized_events"), integer=True))
-    grid.add_row("Weights", "ASSUMPTION — not calibrated resource cost")
+    grid.add_row("Weights", _weight_basis(data))
     grid.add_row("Governed operations", str(data.get("governed_operations")))
     grid.add_row("Zero-rated by policy", _measured_number(data.get("zero_rated_by_policy_vou")))
     grid.add_row("Held by beta interlock",
