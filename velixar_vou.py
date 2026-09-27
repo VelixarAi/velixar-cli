@@ -22,6 +22,7 @@ BILLING attached will be in a slide by Thursday.
 """
 
 import json
+import math
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -62,7 +63,7 @@ def _get(endpoint, **params):
     # NOTE the parameter name: `view` is a QUERY parameter for /v1/vou/mcp, so a
     # positional called `view` collides with it and raises TypeError at runtime.
     query = {k: v for k, v in params.items() if v is not None}
-    data = _api("GET", f"/v1/vou/{endpoint}", params=query)
+    data = _api("GET", f"/v1/vou/{endpoint}", params=query, timeout=15)
     # The API wraps payloads; unwrap once, tolerantly, rather than guessing twice.
     return data.get("data", data) if isinstance(data, dict) else data
 
@@ -702,6 +703,67 @@ def reconcile(hours, fmt):
         sys.exit(1)
 
 
+def _measured_number(value, *, integer=False):
+    """Absent/invalid measurements are unknown; explicit zero remains zero."""
+    if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+        return "Unknown"
+    if integer and (int(value) != value or value > 9007199254740991):
+        return "Unknown"
+    return str(int(value)) if integer else f"{value:,.6f}".rstrip("0").rstrip(".")
+
+
+def _count_line(data):
+    if not isinstance(data, dict):
+        raise click.ClickException("VOU unavailable: invalid summary response")
+    total = _measured_number(data.get("total_vou"))
+    workspace = data.get("workspace_id")
+    if not isinstance(workspace, str) or not workspace.strip():
+        raise click.ClickException("VOU unavailable: summary has no workspace")
+    # Plain output, never Rich markup: identifiers are server-returned data.
+    workspace = "".join(c for c in workspace if c.isprintable())
+    pending = _measured_number(data.get("unnormalized_events"), integer=True)
+    gaps = _measured_number(data.get("meter_gaps"), integer=True)
+    return (f"VOU {total} | workspace {workspace} | pending {pending} | gaps {gaps}"
+            f" | ASSUMPTION weights | {BETA}")
+
+
+@vou.command("count")
+@click.option("--since", default=None, help="ISO timestamp; server owns aggregation")
+@click.option("--until", default=None, help="ISO timestamp; server owns aggregation")
+@click.option("--watch", is_flag=True, help="Refresh authoritative count until Ctrl-C")
+@click.option("--interval", type=click.FloatRange(min=2, max=3600), default=10.0)
+@click.option("--format", "fmt", type=click.Choice(["text", "json"]), default="text")
+def count(since, until, watch, interval, fmt):
+    """Show the workspace VOU count in a terminal or status panel.
+
+    Counts come only from /v1/vou/summary. Reading does not run a model.
+    JSON watch emits one complete server summary per line.
+    """
+    try:
+        while True:
+            try:
+                data = _get("summary", since=since, until=until)
+                line = _count_line(data)
+            except (SystemExit, Exception) as exc:
+                # Never retain a previous number as current after read failure.
+                if isinstance(exc, SystemExit) and exc.code == 0:
+                    raise
+                raise click.ClickException("VOU unavailable; no current count. Check usage:read access and connection.") from None
+            if fmt == "json":
+                click.echo(json.dumps(data, allow_nan=False))
+            else:
+                click.echo(line)
+                window = data.get("window")
+                click.echo("Window: " + (json.dumps(window) if isinstance(window, dict)
+                                         else "server coverage unspecified"))
+                click.echo("Coverage: " + str(data.get("coverage_note") or "unspecified"))
+            if not watch:
+                return
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        return
+
+
 @vou.command()
 @click.option("--since", default=None)
 @click.option("--until", default=None)
@@ -714,13 +776,16 @@ def summary(since, until, fmt):
     grid = Table.grid(padding=(0, 2))
     grid.add_column(style="dim")
     grid.add_column(justify="right")
-    grid.add_row("Total VOU", f"{data.get('total_vou', 0):.2f}")
+    grid.add_row("Total VOU", _measured_number(data.get("total_vou")))
+    grid.add_row("Workspace", Text(str(data.get("workspace_id") or "Unknown")))
+    grid.add_row("Pending normalization", _measured_number(data.get("unnormalized_events"), integer=True))
+    grid.add_row("Weights", "ASSUMPTION — not calibrated resource cost")
     grid.add_row("Governed operations", str(data.get("governed_operations")))
-    grid.add_row("Zero-rated by policy", f"{data.get('zero_rated_by_policy_vou', 0):.2f}")
+    grid.add_row("Zero-rated by policy", _measured_number(data.get("zero_rated_by_policy_vou")))
     grid.add_row("Held by beta interlock",
-                 f"{data.get('beta_interlock_suppressed_vou', 0):.2f}")
-    grid.add_row("Deduplicated operations", str(data.get("deduplicated_operations", 0)))
-    grid.add_row("Meter gaps", str(data.get("meter_gaps", 0)))
+                 _measured_number(data.get("beta_interlock_suppressed_vou")))
+    grid.add_row("Deduplicated operations", _measured_number(data.get("deduplicated_operations"), integer=True))
+    grid.add_row("Meter gaps", _measured_number(data.get("meter_gaps"), integer=True))
     console.print(Panel(grid, title=f"VOU summary — {BETA}"))
 
     families = data.get("vou_by_family") or {}

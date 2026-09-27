@@ -67,3 +67,9 @@ velixar> quit
 - [Documentation](https://docs.velixarai.com)
 - [API Reference](https://docs.velixarai.com/api-reference/introduction)
 - [Dashboard](https://velixarai.com)
+
+### VOU count in your terminal
+
+Run `velixar vou count` for the authoritative workspace count, or `velixar vou count --watch` to refresh every 10 seconds. `--interval` accepts 2–3600 seconds. Use `--since` / `--until` for server-defined time bounds and `--format json` for dashboard/status consumers (one JSON object per refresh). Existing `velixar vou summary` gives the detailed breakdown.
+
+These commands use the configured API key and require `usage:read` plus the existing VOU beta access. They only read `/v1/vou/summary`; they do not invoke models. The display includes workspace, pending normalization, meter gaps and the server's window/coverage. Unknown measurements remain Unknown, while measured zero remains 0. Refresh failures exit with unavailable status rather than reprinting a stale count. VOU beta weights are assumptions, separate from inference tokens, and **not for billing**. A successful local CLI test does not prove deployed summary availability.
