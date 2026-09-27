@@ -811,7 +811,19 @@ def summary(since, until, fmt):
     for name, agg in list((data.get("vou_by_operation") or {}).items())[:12]:
         table.add_row(name, f"{agg['vou']:.2f}", str(agg["count"]))
     console.print(table)
-    console.print(f"  [dim]{data.get('coverage_note', '')}[/dim]")
+    runtime_groups = data.get("vou_by_task_model_provider")
+    if isinstance(runtime_groups, list) and runtime_groups:
+        tasks = Table(title="Model work — recorded VOU subset", box=None)
+        for label in ("TASK", "MODEL", "PROVIDER", "VOU", "WEIGHTS"):
+            tasks.add_column(label, justify="right" if label == "VOU" else "left")
+        for group in runtime_groups:
+            if not isinstance(group, dict):
+                continue
+            tasks.add_row(*(Text(str(group.get(k) or "Unknown")) for k in
+                            ("task_type", "model_id", "provider")),
+                          _measured_number(group.get("vou_amount")), _weight_basis(group))
+        console.print(tasks)
+    console.print(Text(str(data.get("coverage_note") or "Coverage unspecified"), style="dim"))
     _banner()
 
 

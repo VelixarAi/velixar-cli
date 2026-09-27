@@ -37,6 +37,15 @@ class CountTests(unittest.TestCase):
         r=self.invoke(dict(workspace_id='ws',total_vou=3,coverage=dict(complete=False,truncated=True)))
         self.assertNotEqual(r.exit_code,0);self.assertNotIn('VOU 3 |',r.output)
 
+    def test_summary_renders_server_task_amount_without_recalculation(self):
+        from rich.console import Console
+        data=dict(workspace_id='ws',total_vou=9,weight_basis='MIXED',vou_by_task_model_provider=[
+            dict(task_type='coding',model_id='model-x',provider='foundry',vou_amount=1.234567,weight_basis='ASSUMPTION')])
+        with patch.object(v,'_get',return_value=data),patch.object(v,'console',Console(width=140,force_terminal=False)):
+            r=CliRunner().invoke(v.vou,['summary'])
+        self.assertEqual(r.exit_code,0);self.assertIn('1.234567',r.output)
+        self.assertIn('coding',r.output);self.assertIn('MIXED',r.output)
+
     def test_no_provider_endpoint(self):
         with patch.object(v,'_get',return_value=dict(workspace_id='ws',total_vou=2)) as get:
             r=CliRunner().invoke(v.vou,['count','--since','2026-09-27T00:00:00Z'])
