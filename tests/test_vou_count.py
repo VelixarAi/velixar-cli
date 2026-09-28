@@ -46,6 +46,17 @@ class CountTests(unittest.TestCase):
         self.assertEqual(r.exit_code,0);self.assertIn('1.234567',r.output)
         self.assertIn('coding',r.output);self.assertIn('MIXED',r.output)
 
+    def test_negative_group_correction_is_preserved_but_negative_total_is_unknown(self):
+        from rich.console import Console
+        data=dict(workspace_id='ws',total_vou=9,weight_basis='MIXED',vou_by_task_model_provider=[
+            dict(task_type='correction',model_id='model-x',provider='foundry',vou_amount=-1.25,weight_basis='ASSUMPTION')])
+        with patch.object(v,'_get',return_value=data),patch.object(v,'console',Console(width=140,force_terminal=False)):
+            r=CliRunner().invoke(v.vou,['summary'])
+        self.assertEqual(r.exit_code,0);self.assertIn('-1.25',r.output)
+        self.assertEqual(v._measured_number(-1.25),'Unknown')
+        for invalid in (True, float('nan'), float('inf'), '-1.25'):
+            self.assertEqual(v._measured_number(invalid, signed=True),'Unknown')
+
     def test_summary_rejects_partial_in_table_and_json(self):
         data=dict(workspace_id='ws',total_vou=7.25,coverage=dict(complete=False,truncated=True))
         for fmt in ('table','json'):

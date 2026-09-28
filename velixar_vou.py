@@ -703,9 +703,9 @@ def reconcile(hours, fmt):
         sys.exit(1)
 
 
-def _measured_number(value, *, integer=False):
+def _measured_number(value, *, integer=False, signed=False):
     """Absent/invalid measurements are unknown; explicit zero remains zero."""
-    if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+    if type(value) not in (int, float) or not math.isfinite(value) or (value < 0 and not signed):
         return "Unknown"
     if integer and (int(value) != value or value > 9007199254740991):
         return "Unknown"
@@ -814,7 +814,7 @@ def summary(since, until, fmt):
     table.add_column("VOU", justify="right")
     table.add_column("COUNT", justify="right")
     for name, agg in list((data.get("vou_by_operation") or {}).items())[:12]:
-        table.add_row(Text(_terminal_text(name)), _measured_number(agg.get("vou")), _measured_number(agg.get("count"), integer=True))
+        table.add_row(Text(_terminal_text(name)), _measured_number(agg.get("vou"), signed=True), _measured_number(agg.get("count"), integer=True))
     console.print(table)
     runtime_groups = data.get("vou_by_task_model_provider")
     if isinstance(runtime_groups, list) and runtime_groups:
@@ -826,7 +826,7 @@ def summary(since, until, fmt):
                 continue
             tasks.add_row(*(Text(_terminal_text(group.get(k) or "Unknown")) for k in
                             ("task_type", "model_id", "provider")),
-                          _measured_number(group.get("vou_amount")), _weight_basis(group))
+                          _measured_number(group.get("vou_amount"), signed=True), _weight_basis(group))
         console.print(tasks)
     console.print(Text(_terminal_text(data.get("coverage_note") or "Coverage unspecified"), style="dim"))
     _banner()
