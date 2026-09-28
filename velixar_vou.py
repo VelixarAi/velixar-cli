@@ -678,7 +678,7 @@ def reconcile(hours, fmt):
     grid = Table.grid(padding=(0, 2))
     grid.add_column(style="dim")
     grid.add_column(justify="right")
-    grid.add_row("Governed operations", str(data.get("governed_operations")))
+    grid.add_row("Governed operations", _measured_number(data.get("governed_operations"), integer=True))
     grid.add_row("Ledger entries", str(data.get("ledger_entries")))
     grid.add_row("Ledger total VOU", f"{data.get('ledger_total_vou', 0):.4f}")
     rollup = data.get("rollup_total_vou")
@@ -705,7 +705,9 @@ def reconcile(hours, fmt):
 
 def _measured_number(value, *, integer=False, signed=False):
     """Absent/invalid measurements are unknown; explicit zero remains zero."""
-    if type(value) not in (int, float) or not math.isfinite(value) or (value < 0 and not signed):
+    if type(value) not in (int, float):
+        return "Unknown"
+    if abs(value) > 9007199254740991 or not math.isfinite(value) or (value < 0 and not signed):
         return "Unknown"
     if integer and (int(value) != value or value > 9007199254740991):
         return "Unknown"
@@ -793,7 +795,7 @@ def summary(since, until, fmt):
     grid.add_row("Workspace", Text(_terminal_text(data.get("workspace_id") or "Unknown")))
     grid.add_row("Pending normalization", _measured_number(data.get("unnormalized_events"), integer=True))
     grid.add_row("Weights", _weight_basis(data))
-    grid.add_row("Governed operations", str(data.get("governed_operations")))
+    grid.add_row("Governed operations", _measured_number(data.get("governed_operations"), integer=True))
     grid.add_row("Zero-rated by policy", _measured_number(data.get("zero_rated_by_policy_vou")))
     grid.add_row("Held by beta interlock",
                  _measured_number(data.get("beta_interlock_suppressed_vou")))
@@ -801,19 +803,29 @@ def summary(since, until, fmt):
     grid.add_row("Meter gaps", _measured_number(data.get("meter_gaps"), integer=True))
     console.print(Panel(grid, title=f"VOU summary — {BETA}"))
 
-    families = data.get("vou_by_family") or {}
-    if families:
-        peak = max(families.values()) or 1
+    families = data.get("vou_by_family")
+    if isinstance(families, dict) and families:
+        # Bars show magnitude; signed server totals retain correction semantics.
+        valid = {family: amount for family, amount in families.items()
+                 if family in FAMILY_ORDER and _measured_number(amount, signed=True) != "Unknown"}
+        peak = max((abs(amount) for amount in valid.values()), default=0) or 1
+        console.print("Family net VOU (bar length shows magnitude)")
         for family in FAMILY_ORDER:
-            amount = families.get(family, 0)
-            bar = "█" * int(24 * amount / peak) if amount else ""
-            console.print(f"  {family:<12} {amount:>9.2f}  [cyan]{bar}[/cyan]")
+            if family not in families:
+                continue
+            amount = valid.get(family)
+            bar = "█" * min(24, max(0, int(24 * (abs(amount) / peak)))) if amount is not None else ""
+            label = _measured_number(amount, signed=True)
+            console.print(Text(f"  {family:<12} {label:>9}  {bar}"))
 
     table = Table(title="Top operations", box=None)
     table.add_column("OPERATION")
     table.add_column("VOU", justify="right")
     table.add_column("COUNT", justify="right")
-    for name, agg in list((data.get("vou_by_operation") or {}).items())[:12]:
+    operations = data.get("vou_by_operation")
+    for name, agg in list(operations.items())[:12] if isinstance(operations, dict) else []:
+        if not isinstance(agg, dict):
+            continue
         table.add_row(Text(_terminal_text(name)), _measured_number(agg.get("vou"), signed=True), _measured_number(agg.get("count"), integer=True))
     console.print(table)
     runtime_groups = data.get("vou_by_task_model_provider")

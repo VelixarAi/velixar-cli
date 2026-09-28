@@ -57,6 +57,21 @@ class CountTests(unittest.TestCase):
         for invalid in (True, float('nan'), float('inf'), '-1.25'):
             self.assertEqual(v._measured_number(invalid, signed=True),'Unknown')
 
+    def test_summary_untrusted_counts_and_signed_bars_are_bounded(self):
+        from rich.console import Console
+        for amount in (10**400, float('inf'), 'bad', True):
+            self.assertEqual(v._measured_number(amount),'Unknown')
+        data=dict(workspace_id='ws',total_vou=10**400,
+                  governed_operations='9\x1b]52;c;synthetic\x07',
+                  vou_by_family={'MEMORY': -100, 'KNOWLEDGE': -1, 'RESOURCE': 'bad'},
+                  vou_by_operation={'invalid': None})
+        with patch.object(v,'_get',return_value=data),patch.object(v,'console',Console(width=140,force_terminal=False)):
+            r=CliRunner().invoke(v.vou,['summary'])
+        self.assertEqual(r.exit_code,0)
+        self.assertNotIn('\x1b',r.output);self.assertNotIn('synthetic',r.output)
+        self.assertLessEqual(r.output.count('█'),48)
+        self.assertIn('-100',r.output);self.assertIn('Unknown',r.output)
+
     def test_summary_rejects_partial_in_table_and_json(self):
         data=dict(workspace_id='ws',total_vou=7.25,coverage=dict(complete=False,truncated=True))
         for fmt in ('table','json'):
