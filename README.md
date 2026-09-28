@@ -45,6 +45,22 @@ velixar health
 velixar interactive
 ```
 
+## Foundry
+
+`velixar foundry` is the CLI surface for Velixar's model gateway. The gateway is not
+deployed at a default production URL, so configure it explicitly:
+
+```bash
+export VELIXAR_GATEWAY_URL="https://<gateway-host>"
+export VELIXAR_API_KEY="<velixar-api-key>"
+velixar foundry status
+velixar foundry models
+velixar foundry run --prompt "Review this patch"
+```
+
+See [docs/foundry.md](docs/foundry.md) for model selection, preview, streaming,
+receipts, security behavior, exit codes, and current backend gaps.
+
 ## Interactive Mode
 
 ```
