@@ -285,6 +285,11 @@ from velixar_vou import vou as _vou_group  # noqa: E402
 
 cli.add_command(_vou_group)
 
+# ── Foundry CLI ───────────────────────────────────────
+from velixar_foundry import foundry as _foundry_group  # noqa: E402
+
+cli.add_command(_foundry_group)
+
 
 if __name__ == "__main__":
     cli()
