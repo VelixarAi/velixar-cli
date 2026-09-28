@@ -22,6 +22,7 @@ BILLING attached will be in a slide by Thursday.
 """
 
 import json
+import math
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -62,7 +63,7 @@ def _get(endpoint, **params):
     # NOTE the parameter name: `view` is a QUERY parameter for /v1/vou/mcp, so a
     # positional called `view` collides with it and raises TypeError at runtime.
     query = {k: v for k, v in params.items() if v is not None}
-    data = _api("GET", f"/v1/vou/{endpoint}", params=query)
+    data = _api("GET", f"/v1/vou/{endpoint}", params=query, timeout=15)
     # The API wraps payloads; unwrap once, tolerantly, rather than guessing twice.
     return data.get("data", data) if isinstance(data, dict) else data
 
@@ -677,7 +678,7 @@ def reconcile(hours, fmt):
     grid = Table.grid(padding=(0, 2))
     grid.add_column(style="dim")
     grid.add_column(justify="right")
-    grid.add_row("Governed operations", str(data.get("governed_operations")))
+    grid.add_row("Governed operations", _measured_number(data.get("governed_operations"), integer=True))
     grid.add_row("Ledger entries", str(data.get("ledger_entries")))
     grid.add_row("Ledger total VOU", f"{data.get('ledger_total_vou', 0):.4f}")
     rollup = data.get("rollup_total_vou")
@@ -702,6 +703,81 @@ def reconcile(hours, fmt):
         sys.exit(1)
 
 
+def _measured_number(value, *, integer=False, signed=False):
+    """Absent/invalid measurements are unknown; explicit zero remains zero."""
+    if type(value) not in (int, float):
+        return "Unknown"
+    if abs(value) > 9007199254740991 or not math.isfinite(value) or (value < 0 and not signed):
+        return "Unknown"
+    if integer and (int(value) != value or value > 9007199254740991):
+        return "Unknown"
+    return str(int(value)) if integer else f"{value:,.6f}".rstrip("0").rstrip(".")
+
+
+def _terminal_text(value):
+    return "".join(c for c in str(value) if c.isprintable())
+
+
+def _weight_basis(data):
+    value = data.get("weight_basis")
+    return value if value in ("ASSUMPTION", "MIXED", "MEASURED", "UNKNOWN") else "UNKNOWN"
+
+
+def _count_line(data):
+    if not isinstance(data, dict):
+        raise click.ClickException("VOU unavailable: invalid summary response")
+    coverage = data.get("coverage")
+    if coverage is not None and (not isinstance(coverage, dict) or coverage.get("complete") is not True or coverage.get("truncated") is not False):
+        raise click.ClickException("VOU unavailable: incomplete summary coverage")
+    total = _measured_number(data.get("total_vou"))
+    workspace = data.get("workspace_id")
+    if not isinstance(workspace, str) or not workspace.strip():
+        raise click.ClickException("VOU unavailable: summary has no workspace")
+    # Plain output, never Rich markup: identifiers are server-returned data.
+    workspace = _terminal_text(workspace)
+    pending = _measured_number(data.get("unnormalized_events"), integer=True)
+    gaps = _measured_number(data.get("meter_gaps"), integer=True)
+    return (f"VOU {total} | workspace {workspace} | pending {pending} | gaps {gaps}"
+            f" | {_weight_basis(data)} weights | {BETA}")
+
+
+@vou.command("count")
+@click.option("--since", default=None, help="ISO timestamp; server owns aggregation")
+@click.option("--until", default=None, help="ISO timestamp; server owns aggregation")
+@click.option("--watch", is_flag=True, help="Refresh authoritative count until Ctrl-C")
+@click.option("--interval", type=click.FloatRange(min=2, max=3600), default=10.0)
+@click.option("--format", "fmt", type=click.Choice(["text", "json"]), default="text")
+def count(since, until, watch, interval, fmt):
+    """Show the workspace VOU count in a terminal or status panel.
+
+    Counts come only from /v1/vou/summary. Reading does not run a model.
+    JSON watch emits one complete server summary per line.
+    """
+    try:
+        while True:
+            try:
+                data = _get("summary", since=since, until=until)
+                line = _count_line(data)
+            except (SystemExit, Exception) as exc:
+                # Never retain a previous number as current after read failure.
+                if isinstance(exc, SystemExit) and exc.code == 0:
+                    raise
+                raise click.ClickException("VOU unavailable; no current count. Check usage:read access and connection.") from None
+            if fmt == "json":
+                click.echo(json.dumps(data, allow_nan=False))
+            else:
+                click.echo(line)
+                window = data.get("window")
+                click.echo("Window: " + (json.dumps(window) if isinstance(window, dict)
+                                         else "server coverage unspecified"))
+                click.echo("Coverage: " + _terminal_text(data.get("coverage_note") or "unspecified"))
+            if not watch:
+                return
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        return
+
+
 @vou.command()
 @click.option("--since", default=None)
 @click.option("--until", default=None)
@@ -709,36 +785,62 @@ def reconcile(hours, fmt):
 def summary(since, until, fmt):
     """This workspace's VOU, by family and operation."""
     data = _get("summary", since=since, until=until)
+    _count_line(data)  # same scope/coverage gate for table and JSON as count
     if _emit(data, fmt):
         return
     grid = Table.grid(padding=(0, 2))
     grid.add_column(style="dim")
     grid.add_column(justify="right")
-    grid.add_row("Total VOU", f"{data.get('total_vou', 0):.2f}")
-    grid.add_row("Governed operations", str(data.get("governed_operations")))
-    grid.add_row("Zero-rated by policy", f"{data.get('zero_rated_by_policy_vou', 0):.2f}")
+    grid.add_row("Total VOU", _measured_number(data.get("total_vou")))
+    grid.add_row("Workspace", Text(_terminal_text(data.get("workspace_id") or "Unknown")))
+    grid.add_row("Pending normalization", _measured_number(data.get("unnormalized_events"), integer=True))
+    grid.add_row("Weights", _weight_basis(data))
+    grid.add_row("Governed operations", _measured_number(data.get("governed_operations"), integer=True))
+    grid.add_row("Zero-rated by policy", _measured_number(data.get("zero_rated_by_policy_vou")))
     grid.add_row("Held by beta interlock",
-                 f"{data.get('beta_interlock_suppressed_vou', 0):.2f}")
-    grid.add_row("Deduplicated operations", str(data.get("deduplicated_operations", 0)))
-    grid.add_row("Meter gaps", str(data.get("meter_gaps", 0)))
+                 _measured_number(data.get("beta_interlock_suppressed_vou")))
+    grid.add_row("Deduplicated operations", _measured_number(data.get("deduplicated_operations"), integer=True))
+    grid.add_row("Meter gaps", _measured_number(data.get("meter_gaps"), integer=True))
     console.print(Panel(grid, title=f"VOU summary — {BETA}"))
 
-    families = data.get("vou_by_family") or {}
-    if families:
-        peak = max(families.values()) or 1
+    families = data.get("vou_by_family")
+    if isinstance(families, dict) and families:
+        # Bars show magnitude; signed server totals retain correction semantics.
+        valid = {family: amount for family, amount in families.items()
+                 if family in FAMILY_ORDER and _measured_number(amount, signed=True) != "Unknown"}
+        peak = max((abs(amount) for amount in valid.values()), default=0) or 1
+        console.print("Family net VOU (bar length shows magnitude)")
         for family in FAMILY_ORDER:
-            amount = families.get(family, 0)
-            bar = "█" * int(24 * amount / peak) if amount else ""
-            console.print(f"  {family:<12} {amount:>9.2f}  [cyan]{bar}[/cyan]")
+            if family not in families:
+                continue
+            amount = valid.get(family)
+            bar = "█" * min(24, max(0, int(24 * (abs(amount) / peak)))) if amount is not None else ""
+            label = _measured_number(amount, signed=True)
+            console.print(Text(f"  {family:<12} {label:>9}  {bar}"))
 
     table = Table(title="Top operations", box=None)
     table.add_column("OPERATION")
     table.add_column("VOU", justify="right")
     table.add_column("COUNT", justify="right")
-    for name, agg in list((data.get("vou_by_operation") or {}).items())[:12]:
-        table.add_row(name, f"{agg['vou']:.2f}", str(agg["count"]))
+    operations = data.get("vou_by_operation")
+    for name, agg in list(operations.items())[:12] if isinstance(operations, dict) else []:
+        if not isinstance(agg, dict):
+            continue
+        table.add_row(Text(_terminal_text(name)), _measured_number(agg.get("vou"), signed=True), _measured_number(agg.get("count"), integer=True))
     console.print(table)
-    console.print(f"  [dim]{data.get('coverage_note', '')}[/dim]")
+    runtime_groups = data.get("vou_by_task_model_provider")
+    if isinstance(runtime_groups, list) and runtime_groups:
+        tasks = Table(title="Model work — recorded VOU subset", box=None)
+        for label in ("TASK", "MODEL", "PROVIDER", "VOU", "WEIGHTS"):
+            tasks.add_column(label, justify="right" if label == "VOU" else "left")
+        for group in runtime_groups:
+            if not isinstance(group, dict):
+                continue
+            tasks.add_row(*(Text(_terminal_text(group.get(k) or "Unknown")) for k in
+                            ("task_type", "model_id", "provider")),
+                          _measured_number(group.get("vou_amount"), signed=True), _weight_basis(group))
+        console.print(tasks)
+    console.print(Text(_terminal_text(data.get("coverage_note") or "Coverage unspecified"), style="dim"))
     _banner()
 
 
